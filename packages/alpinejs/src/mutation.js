@@ -1,12 +1,29 @@
 import { dequeueJob } from "./scheduler";
+
+/** @typedef {import('./directives').Attribute} Attribute */
+
+/** @typedef {(el: HTMLElement, attrs: Attribute[]) => void} OnAttributesAddedCallback */
+/** @typedef {(el: HTMLElement, attrs: string[]) => void} OnAttributesRemovedCallback */
+/** @typedef {(el: HTMLElement) => void} OnElementCallback */
+
+/** @type {OnAttributesAddedCallback[]} */
 let onAttributeAddeds = []
+/** @type {OnAttributesRemovedCallback[]} */
+let onAttributeRemoveds = []
+/** @type {OnElementCallback[]} */
 let onElRemoveds = []
+/** @type {OnElementCallback[]} */
 let onElAddeds = []
 
+/** @param {OnElementCallback} callback */
 export function onElAdded(callback) {
     onElAddeds.push(callback)
 }
 
+/**
+ * @param {HTMLElement} el
+ * @param {OnElementCallback} callback
+ */
 export function onElRemoved(el, callback) {
     if (typeof callback === 'function') {
         if (! el._x_cleanups) el._x_cleanups = []
@@ -17,10 +34,21 @@ export function onElRemoved(el, callback) {
     }
 }
 
+/** @param {OnAttributesAddedCallback} callback */
 export function onAttributesAdded(callback) {
     onAttributeAddeds.push(callback)
 }
 
+/** @param {OnAttributesRemovedCallback} callback */
+export function onAttributesRemoved(callback) {
+    onAttributeRemoveds.push(callback)
+}
+
+/**
+ * @param {HTMLElement} el
+ * @param {string} name 
+ * @param {() => void} callback 
+ */
 export function onAttributeRemoved(el, name, callback) {
     if (! el._x_attributeCleanups) el._x_attributeCleanups = {}
     if (! el._x_attributeCleanups[name]) el._x_attributeCleanups[name] = []
@@ -28,6 +56,10 @@ export function onAttributeRemoved(el, name, callback) {
     el._x_attributeCleanups[name].push(callback)
 }
 
+/**
+ * @param {HTMLElement} el 
+ * @param {string[]} names
+ */
 export function cleanupAttributes(el, names) {
     if (! el._x_attributeCleanups) return
 
@@ -40,6 +72,7 @@ export function cleanupAttributes(el, names) {
     })
 }
 
+/** @param {HTMLElement} el */
 export function cleanupElement(el) {
     el._x_effects?.forEach(dequeueJob)
 
@@ -84,6 +117,7 @@ export function flushObserver() {
     })
 }
 
+/** @param {() => void} callback */
 export function mutateDom(callback) {
     if (! currentlyObserving) return callback()
 
@@ -97,6 +131,7 @@ export function mutateDom(callback) {
 }
 
 let isCollecting = false
+/** @type {MutationRecord[]} */
 let deferredMutations = []
 
 export function deferMutations() {
@@ -111,6 +146,8 @@ export function flushAndStopDeferringMutations() {
     deferredMutations = []
 }
 
+
+/** @param {MutationRecord[]} mutations */
 function onMutate(mutations) {
     if (isCollecting) {
         deferredMutations = deferredMutations.concat(mutations)
@@ -118,9 +155,13 @@ function onMutate(mutations) {
         return
     }
 
+    /** @type {HTMLElement[]} */
     let addedNodes = []
+    /** @type {Set<HTMLElement>} */
     let removedNodes = new Set
+    /** @type {Map<HTMLElement, Attribute[]>} */
     let addedAttributes = new Map
+    /** @type {Map<HTMLElement, string[]>} */
     let removedAttributes = new Map
 
     for (let i = 0; i < mutations.length; i++) {
@@ -154,6 +195,7 @@ function onMutate(mutations) {
         }
 
         if (mutations[i].type === 'attributes') {
+            /** @type {HTMLElement} */
             let el = mutations[i].target
             let name = mutations[i].attributeName
             let oldValue = mutations[i].oldValue
@@ -186,6 +228,7 @@ function onMutate(mutations) {
 
     removedAttributes.forEach((attrs, el) => {
         cleanupAttributes(el, attrs)
+        onAttributeRemoveds.forEach(i => i(el, attrs))
     })
 
     addedAttributes.forEach((attrs, el) => {

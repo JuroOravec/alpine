@@ -368,9 +368,6 @@ export function renderHiddenInputs(Alpine, el, name, value) {
     // Mark them for later tracking...
     newInputs.forEach(i => i._x_hiddenInput = true)
 
-    // Mark them for Alpine ignoring...
-    newInputs.forEach(i => i._x_ignore = true)
-
     // Gather old elements for removal...
     let children = el.children
 
@@ -391,10 +388,13 @@ export function renderHiddenInputs(Alpine, el, name, value) {
     })
 }
 
-function generateInputs(name, value, carry = []) {
+function generateInputs(name, value) {
+    /** @type {HTMLElement[]} */
+    let els = [];
+
     if (isObjectOrArray(value)) {
         for (let key in value) {
-            carry = carry.concat(
+            els = els.concat(
                 generateInputs(`${name}[${key}]`, value[key])
             )
         }
@@ -403,12 +403,13 @@ function generateInputs(name, value, carry = []) {
         el.setAttribute('type', 'hidden')
         el.setAttribute('name', name)
         el.setAttribute('value', '' + value)
+        el.setAttribute('x-ignore', '' + value)
 
         return [el]
     }
 
 
-    return carry
+    return els
 }
 
 function isObjectOrArray(subject) {

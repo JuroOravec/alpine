@@ -1,4 +1,4 @@
-import { findClosest } from './lifecycle'
+import { findClosest } from './utils/findClosest'
 
 let globalIdMemo = {}
 

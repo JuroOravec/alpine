@@ -7,6 +7,9 @@ import { mutateDom } from '../mutation'
 import { warn } from '../utils/warn'
 import { skipDuringClone } from '../clone'
 
+/** @typedef {import('../evaluator').EvaluateCallback} EvaluateCallback */
+/** @typedef { {items: string; item: string; index?: string; collection?: string} } ForExpression */
+
 directive('for', (el, { expression }, { effect, cleanup }) => {
     let iteratorNames = parseForExpression(expression)
 
@@ -37,6 +40,12 @@ directive('for', (el, { expression }, { effect, cleanup }) => {
 
 let shouldFastRender = true
 
+/**
+ * @param {HTMLElement} el 
+ * @param {ForExpression} iteratorNames 
+ * @param {EvaluateCallback} evaluateItems 
+ * @param {EvaluateCallback} evaluateKey 
+ */
 function loop(el, iteratorNames, evaluateItems, evaluateKey) {
     let isObject = i => typeof i === 'object' && ! Array.isArray(i)
     let templateEl = el
@@ -235,14 +244,17 @@ function loop(el, iteratorNames, evaluateItems, evaluateKey) {
 }
 
 // This was taken from VueJS 2.* core. Thanks Vue!
+let forIteratorRE = /,([^,\}\]]*)(?:,([^,\}\]]*))?$/
+let stripParensRE = /^\s*\(|\)\s*$/g
+let forAliasRE = /([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/
+
+/** @param {string} expression */
 function parseForExpression(expression) {
-    let forIteratorRE = /,([^,\}\]]*)(?:,([^,\}\]]*))?$/
-    let stripParensRE = /^\s*\(|\)\s*$/g
-    let forAliasRE = /([\s\S]*?)\s+(?:in|of)\s+([\s\S]*)/
     let inMatch = expression.match(forAliasRE)
 
     if (! inMatch) return
 
+    /** @type {ForExpression} */
     let res = {}
     res.items = inMatch[2].trim()
     let item = inMatch[1].replace(stripParensRE, '').trim()
@@ -262,19 +274,29 @@ function parseForExpression(expression) {
     return res
 }
 
+let arrayDestructRE = /^\[.*\]$/;
+let objectDestructRE = /^\{.*\}$/;
+
+/**
+ * @template T
+ * @param {ForExpression} iteratorNames
+ * @param {T} item
+ * @param {string | key} index
+ * @param {T[]} items
+ */
 function getIterationScopeVariables(iteratorNames, item, index, items) {
     // We must create a new object, so each iteration has a new scope
     let scopeVariables = {}
 
     // Support array destructuring ([foo, bar]).
-    if (/^\[.*\]$/.test(iteratorNames.item) && Array.isArray(item)) {
+    if (iteratorNames.item.match(arrayDestructRE) && Array.isArray(item)) {
         let names = iteratorNames.item.replace('[', '').replace(']', '').split(',').map(i => i.trim())
 
         names.forEach((name, i) => {
             scopeVariables[name] = item[i]
         })
     // Support object destructuring ({ foo: 'oof', bar: 'rab' }).
-    } else if (/^\{.*\}$/.test(iteratorNames.item) && ! Array.isArray(item) && typeof item === 'object') {
+    } else if (iteratorNames.item.match(objectDestructRE) && ! Array.isArray(item) && typeof item === 'object') {
         let names = iteratorNames.item.replace('{', '').replace('}', '').split(',').map(i => i.trim())
 
         names.forEach(name => {

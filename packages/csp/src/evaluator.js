@@ -17,15 +17,14 @@ export function cspEvaluator(el, expression) {
 }
 
 function generateDataStack(el) {
-    let overriddenMagics = {}
-
-    injectMagics(overriddenMagics, el)
+    const overriddenMagics = injectMagics({}, el)
 
     return [overriddenMagics, ...closestDataStack(el)]
 }
 
 function generateEvaluator(el, expression, dataStack) {
     return (receiver = () => {}, { scope = {}, params = [] } = {}) => {
+        // NOTE: MERGED PROXY MUTABLE FROM INSIDE `runIfTypeOfFunction`.
         let completeScope = mergeProxies([scope, ...dataStack])
 
         let evaluatedExpression = expression.split('.').reduce(
@@ -39,6 +38,7 @@ function generateEvaluator(el, expression, dataStack) {
             completeScope,
         );
 
+        // NOTE: IF `evaluatedExpression` points to function, this evaluates is
         runIfTypeOfFunction(receiver, evaluatedExpression, completeScope, params)
     }
 }

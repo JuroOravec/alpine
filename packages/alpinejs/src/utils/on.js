@@ -85,6 +85,71 @@ export default function on (el, event, modifiers, callback) {
     }
 }
 
+//////////////////////////////////////////////////////////////////////////////////
+// The below was attempt for https://github.com/alpinejs/alpine/discussions/4657#discussioncomment-13987850
+//////////////////////////////////////////////////////////////////////////////////
+
+// /** @type {WeakMap<HTMLElement, Map<string, Map<number, (() => void)[]>>>} */
+// const allEventHandlers = new WeakMap();
+
+// /**
+//  * @param {HTMLElement} elem
+//  * @param {string} event
+//  * @param {(ev: any) => void} handler
+//  * @param {AddEventListenerOptions} options
+// */
+// const addEvent = (elem, event, handler, options) => {
+//     // Turn the two booleans onto values ranging 0-3 for different combinations
+//     // (shift the second boolean by 1 bit to the left, then OR it with the first)
+//     const mode = !!options.capture | (!!options.passive << 1);
+    
+//     // Initialize path in cache if not done so yet
+//     let elemHandlers = allEventHandlers.get(elem)
+//     if (!elemHandlers) {
+//         elemHandlers = new Map();
+//         allEventHandlers.set(elem, elemHandlers);
+//     }
+//     let elemEventHandlers = elemHandlers.get(event)
+//     if (!elemEventHandlers) {
+//         elemEventHandlers = new Map();
+//         elemHandlers.set(event, elemEventHandlers);
+//     }
+//     let modeEvents = elemEventHandlers.get(mode);
+//     if (!modeEvents) {
+//         modeEvents = [];
+//         elemEventHandlers.set(mode, modeEvents);
+//     }
+
+//     // Set up the actual event listener if not done yet.
+//     document.addEventListener
+
+//     modeEvents.push(handler)
+
+// }
+
+// // Given an object of booleans, create a bitwise flag (binary value where
+// // the 1 or 0 at each digit describes the true / false state).
+// // Also returns a function that can be used to query the state by the flag's name.
+// /** @param {Record<string, any>} flags */
+// const toBitwiseFlag = (flags) => {
+//     const nameToOffset = {}
+//     let i = 0;
+//     let agg = 0;
+//     for (const [key, value] of Object.entries(flags)) {
+//         nameToOffset[key] = i;
+//         agg = agg | (!!value << i);
+//         i++;
+//     }
+//     const getByName = (name) => {
+//         const offset = nameToOffset[name];
+//         if (offset === undefined) return undefined;
+//         const mask = (1 << offset);
+//         return !!(agg & mask);
+//     };
+//     return { agg, getByName };
+// }
+
+
 function dotSyntax(subject) {
     return subject.replace(/-/g, ".")
 }

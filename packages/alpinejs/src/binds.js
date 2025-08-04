@@ -1,19 +1,27 @@
 import { attributesOnly, directives } from "./directives"
 
+/** @type { {[key: string | HTMLElement]: () => object} } */
 let binds = {}
 
-export function bind(name, bindings) {
+/**
+ * @param {HTMLElement | string} nameOrEl
+ * @param {*} bindings
+ */
+export function bind(nameOrEl, bindings) {
     let getBindings = typeof bindings !== 'function' ? () => bindings : bindings
 
-    if (name instanceof Element) {
-        return applyBindingsObject(name, getBindings())
+    if (nameOrEl instanceof Element) {
+        return applyBindingsObject(nameOrEl, getBindings())
     } else {
-        binds[name] = getBindings
+        binds[nameOrEl] = getBindings
     }
 
     return () => {} // Null cleanup...
 }
 
+/**
+ * @param {object} obj
+ */
 export function injectBindingProviders(obj) {
     Object.entries(binds).forEach(([name, callback]) => {
         Object.defineProperty(obj, name, {
@@ -34,6 +42,11 @@ export function addVirtualBindings(el, bindings) {
     el._x_virtualDirectives = getBindings()
 }
 
+/**
+ * @param {HTMLElement} el
+ * @param {object} obj
+ * @param {unknown} original
+ */
 export function applyBindingsObject(el, obj, original) {
     let cleanupRunners = []
 

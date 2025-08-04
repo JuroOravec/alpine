@@ -1,28 +1,34 @@
 // Warning: The concept of "interceptors" in Alpine is not public API and is subject to change
 // without tagging a major release.
 
-export function initInterceptors(data) {
-    let isObject = val => typeof val === 'object' && !Array.isArray(val) && val !== null
+let isObject = val => typeof val === 'object' && !Array.isArray(val) && val !== null
 
-    let recurse = (obj, basePath = '') => {
+// TODO: This takes about 5ms. I have a hunch that this could be optimized.
+// But for that I'd need to have a better understanding of what the interceptors are.
+/**
+ * @param {object} data
+ */
+export function initInterceptors(data) {
+    const stack = [{ obj: data, basePath: null }];
+
+    while (stack.length) {
+        const { obj, basePath } = stack.shift()
         Object.entries(Object.getOwnPropertyDescriptors(obj)).forEach(([key, { value, enumerable }]) => {
             // Skip getters.
             if (enumerable === false || value === undefined) return
             if (typeof value === 'object' && value !== null && value.__v_skip) return
-
-            let path = basePath === '' ? key : `${basePath}.${key}`
-
+            
+            let path = !basePath ? key : `${basePath}.${key}`
+            
             if (typeof value === 'object' && value !== null && value._x_interceptor) {
-                obj[key] = value.initialize(data, path, key)
+                obj[key] = value.initialize(obj, path, key)
             } else {
                 if (isObject(value) && value !== obj && ! (value instanceof Element)) {
-                    recurse(value, path)
+                    stack.unshift({ obj: value, basePath: path });
                 }
             }
         })
     }
-
-    return recurse(data)
 }
 
 export function interceptor(callback, mutateObj = () => {}) {

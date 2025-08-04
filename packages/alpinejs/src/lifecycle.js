@@ -1,6 +1,7 @@
 import { startObservingMutations, onAttributesAdded, onElAdded, onElRemoved, cleanupAttributes, cleanupElement } from "./mutation"
 import { deferHandlingDirectives, directiveExists, directives } from "./directives"
 import { dispatch } from './utils/dispatch'
+import { findClosestByCss } from './utils/findClosest'
 import { walk } from "./utils/walk"
 import { warn } from './utils/warn'
 
@@ -25,12 +26,7 @@ export function start() {
         directives(el, attrs).forEach(handle => handle())
     })
 
-    let outNestedComponents = el => ! closestRoot(el.parentElement, true)
-    Array.from(document.querySelectorAll(allSelectors().join(',')))
-        .filter(outNestedComponents)
-        .forEach(el => {
-            initTree(el)
-        })
+    initTree(document)
 
     dispatch(document, 'alpine:initialized')
 
@@ -40,42 +36,57 @@ export function start() {
 }
 
 let rootSelectorCallbacks = []
-let initSelectorCallbacks = []
 
-export function rootSelectors() {
-    return rootSelectorCallbacks.map(fn => fn())
+// TODO[better-upward-search] - Remove. Instead set metadata on `Alpine.diretive()`
+export function getRootSelectors() {
+    return rootSelectorCallbacks.map(fn => fn());
 }
 
-export function allSelectors() {
-    return rootSelectorCallbacks.concat(initSelectorCallbacks).map(fn => fn())
+// TODO[better-upward-search]
+// Does `addRootSelector` NEED to be part of public API?
+//
+// Instead, for next major release, add a `settings` argument to `directive()`.
+// So one could define directly on `Alpine.directive()` whether the directive should be handled
+// as root or not. That way, the creation of the selector would remain internal, which would mean:
+// 1. We could have the confidence that the root selectors are all valid.
+// 2. Freedom to define the selectors as XPath selectors instead of CSS selectors.
+export function addRootSelector(selectorCallback) {
+    rootSelectorCallbacks.push(selectorCallback)
 }
 
-export function addRootSelector(selectorCallback) { rootSelectorCallbacks.push(selectorCallback) }
-export function addInitSelector(selectorCallback) { initSelectorCallbacks.push(selectorCallback) }
-
-export function closestRoot(el, includeInitSelectors = false) {
-    return findClosest(el, element => {
-        const selectors = includeInitSelectors ? allSelectors() : rootSelectors()
-
-        if (selectors.some(selector => element.matches(selector))) return true
-    })
+// TODO[better-upward-search]
+// TODO - In next major release, add a `settings` argument to `directive()`,
+// and add a fields that says whether the directive supports:
+// 1. values - AKA string after `:`, e.g. `x-on:click`
+// 2. modifiers - AKA string after `.`, e.g. `x-on:click.prevent`
+// These could be set to explicit list of strings, or simply `true` for more dynamic needs.
+// (defaults to `true` for 3rd-party diretives for backwards compatibility?)
+//
+// ```js
+// directive(
+//   'my-directive',
+//   (el) => { ... },
+//   { values: true, modifiers: ['prevent', 'once'] },
+// )
+// ```
+//
+// Thus, if directive does NOT support neither (`false` or empty list),
+// then we could we could look that up here. And then we could search attributes
+// upwards by doing `el.closest("[x-diretive]")`
+//
+// Because, if a directive DOES support values or modifiers, we might want to instead use
+// xPath selector with `document.evaluate()` (which might be slower).
+export function closestRoot(el) {
+    const rootSelectors = getRootSelectors()
+    return findClosestByCss(el, rootSelectors);
 }
 
-export function findClosest(el, callback) {
-    if (! el) return
-
-    if (callback(el)) return el
-
-    // Support crawling up teleports.
-    if (el._x_teleportBack) el = el._x_teleportBack
-
-    if (! el.parentElement) return
-
-    return findClosest(el.parentElement, callback)
-}
-
+// TODO[better-upward-search]
+// Construct the selectors based on whether directives allow values (`:`)
+// and/or modifiers (`.`).
+// But `cloneTree()` where this is used is deprecated, so maybe just delete it in the future?
 export function isRoot(el) {
-    return rootSelectors().some(selector => el.matches(selector))
+    return getRootSelectors().some(selector => el.matches(selector))
 }
 
 let initInterceptors = []
@@ -84,16 +95,21 @@ export function interceptInit(callback) { initInterceptors.push(callback) }
 
 let markerDispenser = 1
 
-export function initTree(el, walker = walk, intercept = () => {}) {
+/** @param {HTMLElement | Document} el */
+export function initTree(el, walker = walk, intercept = null) {
     // Don't init a tree within a parent that is being ignored...
-    if (findClosest(el, i => i._x_ignore)) return
+    const isInsideIgnored = !(el instanceof Document) && findClosestByCss(el, ['[x-ignore],[x-ignore\\.self]']);
+    if (isInsideIgnored) return;
 
     deferHandlingDirectives(() => {
         walker(el, (el, skip) => {
             // If the element has a marker, it's already been initialized...
-            if (el._x_marker) return
+            // TOOD
+            // if (el._x_marker) return
+            if (el._x_marker) return skip();
 
-            intercept(el, skip)
+            // TODO
+            if (intercept) intercept(el, skip);
 
             initInterceptors.forEach(i => i(el, skip))
 
@@ -104,17 +120,19 @@ export function initTree(el, walker = walk, intercept = () => {}) {
             // elements that are moved around on the page.
             if (!el._x_ignore) el._x_marker = markerDispenser++
 
+            // TODO - WHY DON'T WE CHECK FOR `_x_ignoreSelf?
             el._x_ignore && skip()
-        })
+        }, { lazy: true })
     })
 }
 
+/** @param {HTMLElement | Document} el */
 export function destroyTree(root, walker = walk) {
     walker(root, el => {
         cleanupElement(el)
         cleanupAttributes(el)
         delete el._x_marker
-    })
+    }, { lazy: false })
 }
 
 function warnAboutMissingPlugins() {

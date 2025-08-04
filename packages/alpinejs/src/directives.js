@@ -1,9 +1,17 @@
-import { onAttributeRemoved, onElRemoved } from './mutation'
+import { onAttributeRemoved } from './mutation'
 import { evaluate, evaluateLater } from './evaluator'
 import { elementBoundEffect } from './reactivity'
 import Alpine from './alpine'
 
+// NOTE: An attribute without a value (e.g. `<div x-data>`) still
+// has empty string as value.
+/** @typedef { {name: string; value: string} } Attribute */
+/** @typedef { NamedNodeMap | Attribute[] } AttributeList */
+/** @typedef { (attr: Attribute) => Attribute } AttributeTransformer */
+/** @typedef { { type: string; value: string | null; modifiers: string[]; expression: string; original: unknown } } Directive */
+
 let prefixAsString = 'x-'
+let alpineAttributeRegex = new RegExp(`^${prefixAsString}([^:^.]+)\\b`)
 
 export function prefix(subject = '') {
     return prefixAsString + subject
@@ -11,10 +19,17 @@ export function prefix(subject = '') {
 
 export function setPrefix(newPrefix) {
     prefixAsString = newPrefix
+    // NOTE: The attribut regex is accessed more times than written,
+    // so we pre-compute it on write.
+    alpineAttributeRegex = new RegExp(`^${prefixAsString}([^:^.]+)\\b`);
 }
 
 let directiveHandlers = {}
 
+/**
+ * @param {string} name
+ * @param {(el: HTMLElement, directive: Directive, { effect, cleanup }) => void } callback
+ */
 export function directive(name, callback) {
     directiveHandlers[name] = callback
 
@@ -30,12 +45,20 @@ export function directive(name, callback) {
     }
 }
 
+/**
+ * @param {string} name
+ */
 export function directiveExists(name) {
     return Object.keys(directiveHandlers).includes(name)
 }
 
+/**
+ * @param {HTMLElement} el 
+ * @param {AttributeList} attributes
+ * @param {object} originalAttributeOverride
+ */
 export function directives(el, attributes, originalAttributeOverride) {
-    attributes = Array.from(attributes)
+    let attributesArr = Array.from(attributes)
 
     if (el._x_virtualDirectives) {
         let vAttributes = Object.entries(el._x_virtualDirectives).map(([name, value]) => ({ name, value }))
@@ -54,26 +77,43 @@ export function directives(el, attributes, originalAttributeOverride) {
             return attribute
         })
 
-        attributes = attributes.concat(vAttributes)
+        attributesArr = attributesArr.concat(vAttributes)
     }
 
     let transformedAttributeMap = {}
 
-    let directives = attributes
-        .map(toTransformedAttributes((newName, oldName) => transformedAttributeMap[newName] = oldName))
-        .filter(outNonAlpineAttributes)
-        .map(toParsedDirectives(transformedAttributeMap, originalAttributeOverride))
-        .sort(byPriority)
+    const onChangedName = (newName, oldName) => {
+        transformedAttributeMap[newName] = oldName;
+    }
 
-    return directives.map(directive => {
-        return getDirectiveHandler(el, directive)
-    })
+    // NOTE: Use a single loop to avoid intermediate arrays.
+    /** @type {Directive[]} */
+    const directivesData = [];
+    for (const attribute of attributesArr) {
+      const transformedAttr = toTransformedAttributes(attribute, onChangedName);
+      
+      if (transformedAttr.name.match(alpineAttributeRegex)) {
+        const directive = toParsedDirectives(transformedAttr, transformedAttributeMap, originalAttributeOverride);
+        directivesData.push(directive);
+      }
+    }
+    directivesData.sort(byPriority);
+
+    const handlers = []
+    for (const directive of directivesData) {
+        const handler = getDirectiveHandler(el, directive);
+        if (handler) handlers.push(handler);
+    }
+    return handlers;
 }
 
+/**
+ * @param {AttributeList} attributes 
+ */
 export function attributesOnly(attributes) {
     return Array.from(attributes)
-        .map(toTransformedAttributes())
-        .filter(attr => ! outNonAlpineAttributes(attr))
+        .map(attr => toTransformedAttributes(attr))
+        .filter(attr => ! attr.name.match(alpineAttributeRegex))
 }
 
 let isDeferringHandlers = false
@@ -89,11 +129,18 @@ export function deferHandlingDirectives(callback) {
 
     directiveHandlerStacks.set(key, [])
 
-    let flushHandlers = () => {
-        while (directiveHandlerStacks.get(key).length) directiveHandlerStacks.get(key).shift()()
-
-        directiveHandlerStacks.delete(key)
-    }
+    // NOTE: `flushHandlers()` is a performance hotspot (observed in Alpine 3.14.9),
+    //       with about ~35% of the time spent here when Alpine is starting (`Alpine.start()`).
+    const flushHandlers = () => {
+      const stack = directiveHandlerStacks.get(key);
+      directiveHandlerStacks.delete(key);
+    
+      if (!stack) return;
+    
+      for (let i = 0; i < stack.length; i++) {
+        stack[i]();
+      }
+    };
 
     let stopDeferring = () => { isDeferringHandlers = false; flushHandlers() }
 
@@ -102,6 +149,22 @@ export function deferHandlingDirectives(callback) {
     stopDeferring()
 }
 
+
+/** @type {Map<HTMLElement, [(cb: () => void) => void, () => void]> } */
+let elBoundEffectsCache = new Map()
+const cached = elBoundEffectsCache.get(el);
+if (cached) return cached;
+elBoundEffectsCache.set(el, result)
+
+
+// AAAAh, so `getElementBoundUtilities()` adds `_x_effects`
+// Ah, so this also creates the `effect()` helper.
+// NOTE: this fn is used in 2 places:
+//       1. `getDirectiveHandler`, which is used ONLY with elements with `x-` alpine directives
+//       2. `getUtilities` / `injectMagics`
+/**
+ * @param {HTMLElement} el
+ */
 export function getElementBoundUtilities(el) {
     let cleanups = []
 
@@ -124,10 +187,14 @@ export function getElementBoundUtilities(el) {
     return [utilities, doCleanup]
 }
 
+/**
+ * @param {HTMLElement} el
+ * @param {Directive} directive
+ */
 export function getDirectiveHandler(el, directive) {
-    let noop = () => {}
+    let handler = directiveHandlers[directive.type];
 
-    let handler = directiveHandlers[directive.type] || noop
+    if (!handler) return null;
 
     let [utilities, cleanup] = getElementBoundUtilities(el)
 
@@ -136,6 +203,8 @@ export function getDirectiveHandler(el, directive) {
     let fullHandler = () => {
         if (el._x_ignore || el._x_ignoreSelf) return
 
+        // TODO - WHAT IS THE POINT OF THIS `.inline`? Why can't we just move
+        // the logic with the rest of the `handler` fn?
         handler.inline && handler.inline(el, directive, utilities)
 
         handler = handler.bind(handler, el, directive, utilities)
@@ -156,44 +225,57 @@ export let startingWith = (subject, replacement) => ({ name, value }) => {
 
 export let into = i => i
 
-function toTransformedAttributes(callback = () => {}) {
-    return ({ name, value }) => {
-        let { name: newName, value: newValue } = attributeTransformers.reduce((carry, transform) => {
-            return transform(carry)
-        }, { name, value })
+/**
+ * @param {Attribute}
+ * @param { (newName: string, oldName: string) => void } onChangedName 
+ * @returns {Attribute}
+ */
+function toTransformedAttributes({ name, value }, onChangedName = () => {}) {
+    let { name: newName, value: newValue } = attributeTransformers.reduce((carry, transform) => {
+        return transform(carry)
+    }, { name, value })
 
-        if (newName !== name) callback(newName, name)
+    if (newName !== name) onChangedName(newName, name)
 
-        return { name: newName, value: newValue }
-    }
+    return { name: newName, value: newValue }
 }
 
+/** @type {AttributeTransformer[]} */
 let attributeTransformers = []
 
+/**
+ * @param {AttributeTransformer} callback
+ */
 export function mapAttributes(callback) {
     attributeTransformers.push(callback)
 }
 
-function outNonAlpineAttributes({ name }) {
-    return alpineAttributeRegex().test(name)
-}
+let directiveValueRegex = /:([a-zA-Z0-9\-_:]+)/;
+let modifierValueRegex = /\.[^.\]]+(?=[^\]]*$)/g;
 
-let alpineAttributeRegex = () => (new RegExp(`^${prefixAsString}([^:^.]+)\\b`))
+/**
+ * @param {Attribute}
+ * @param {Record<string, string>} transformedAttributeMap
+ * @param {unknown} originalAttributeOverride
+ * @returns {Directive}
+ */
+function toParsedDirectives({ name, value }, transformedAttributeMap, originalAttributeOverride) {
+    // AKA the directive name, e.g. `<div x-data>` has type `data`
+    let typeMatch = name.match(alpineAttributeRegex)
+    // Value is the part of the directive after of `:`, e.g. `<div x-on:click>` has value `click`
+    let valueMatch = name.match(directiveValueRegex)
+    // Value is the part of the directive after of `.`, e.g. `<div x-on:click.prevent.once>`
+    // has modifiers `prevent` and `once`
+    let modifiers = name.match(modifierValueRegex) || []
+    let original = originalAttributeOverride || transformedAttributeMap[name] || name
 
-function toParsedDirectives(transformedAttributeMap, originalAttributeOverride) {
-    return ({ name, value }) => {
-        let typeMatch = name.match(alpineAttributeRegex())
-        let valueMatch = name.match(/:([a-zA-Z0-9\-_:]+)/)
-        let modifiers = name.match(/\.[^.\]]+(?=[^\]]*$)/g) || []
-        let original = originalAttributeOverride || transformedAttributeMap[name] || name
-
-        return {
-            type: typeMatch ? typeMatch[1] : null,
-            value: valueMatch ? valueMatch[1] : null,
-            modifiers: modifiers.map(i => i.replace('.', '')),
-            expression: value,
-            original,
-        }
+    return {
+        // TODO - How can a directive NOT be matched? This should raise error.
+        type: typeMatch ? typeMatch[1] : null,
+        value: valueMatch ? valueMatch[1] : null,
+        modifiers: modifiers.map(i => i.replace('.', '')),
+        expression: value,
+        original,
     }
 }
 
@@ -217,6 +299,10 @@ let directiveOrder = [
     'teleport',
 ]
 
+/**
+ * @param {Directive} a
+ * @param {Directive} b
+ */
 function byPriority(a, b) {
     let typeA = directiveOrder.indexOf(a.type) === -1 ? DEFAULT : a.type
     let typeB = directiveOrder.indexOf(b.type) === -1 ? DEFAULT : b.type

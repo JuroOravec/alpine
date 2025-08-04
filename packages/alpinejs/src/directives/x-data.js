@@ -4,34 +4,39 @@ import { injectDataProviders } from '../datas'
 import { addRootSelector } from '../lifecycle'
 import { interceptClone, isCloning, isCloningLegacy } from '../clone'
 import { addScopeToNode } from '../scope'
-import { injectMagics, magic } from '../magics'
+import { injectMagics } from '../magics'
 import { reactive } from '../reactivity'
 import { evaluate } from '../evaluator'
 
 addRootSelector(() => `[${prefix('data')}]`)
 
-directive('data', ((el, { expression }, { cleanup }) => {
+directive('data', ((el, { modifiers, expression }, { cleanup }) => {
     if (shouldSkipRegisteringDataDuringClone(el)) return
 
-    expression = expression === '' ? '{}' : expression
+    // TODO - ADDED `x-data.isolated` modifier.
+    const isolated = modifiers.includes('isolated');
 
-    let magicContext = {}
-    injectMagics(magicContext, el)
+    // NOTE: HERE magic injected only with el with `x-data`
+    const magicContext = injectMagics({}, el)
 
     let dataProviderContext = {}
     injectDataProviders(dataProviderContext, magicContext)
 
-    let data = evaluate(el, expression, { scope: dataProviderContext })
+    // Only run expression if it has something else than nothing / empty dict
+    let data;
+    if (!expression && expression !== '{}') {
+        data = evaluate(el, expression, { scope: dataProviderContext })
+    }
 
     if (data === undefined || data === true) data = {}
 
-    injectMagics(data, el)
+    data = injectMagics(data, el)
 
     let reactiveData = reactive(data)
 
     initInterceptors(reactiveData)
 
-    let undo = addScopeToNode(el, reactiveData)
+    let undo = addScopeToNode(el, reactiveData, null, isolated)
 
     reactiveData['init'] && evaluate(el, reactiveData['init'])
 

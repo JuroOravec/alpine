@@ -4,6 +4,8 @@ import { scheduler } from './scheduler'
 let reactive, effect, release, raw
 
 let shouldSchedule = true
+
+/** @param {() => void} callback */
 export function disableEffectScheduling(callback) {
     shouldSchedule = false
 
@@ -27,12 +29,23 @@ export function setReactivityEngine(engine) {
 
 export function overrideEffect(override) { effect = override }
 
+// TODO - elementBoundEffect is called 3x for each element!!! - Once for magics, and once for each directive
+/**
+ * @param {HTMLElement} el
+ * @returns { [(callback: any) => any, () => void] }
+ */
 export function elementBoundEffect(el) {
-    let cleanup = () => {}
+    const cleanups = []
 
+    // TODO 
+    // TODO - CHECK IF THIS WORKS!!
+    // TODO - THECHANGES TO THIS FN ALLOW TO CALL `effect()` inside handlers more than once
     let wrappedEffect = (callback) => {
         let effectReference = effect(callback)
 
+        // QUESTION - IS `_x_effects` used also on HTML elements without Alpine directives?
+        //            If NOT, then we can optimize `walk()` with `querySelectorAll`
+        //            NOTE: see `onElRemoved` for context
         if (! el._x_effects) {
             el._x_effects = new Set
 
@@ -42,18 +55,21 @@ export function elementBoundEffect(el) {
 
         el._x_effects.add(effectReference)
 
-        cleanup = () => {
+        const effectCleanup = () => {
             if (effectReference === undefined) return
 
             el._x_effects.delete(effectReference)
 
             release(effectReference)
         }
+        cleanups.push(effectCleanup);
 
         return effectReference
     }
 
-    return [wrappedEffect, () => { cleanup() }]
+    const cleanup = () => cleanups.forEach((fn) => fn())
+
+    return [wrappedEffect, cleanup]
 }
 
 export function watch(getter, callback) {

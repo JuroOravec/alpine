@@ -14,7 +14,9 @@ directive('if', (el, { expression }, { effect, cleanup }) => {
     let show = () => {
         if (el._x_currentIfEl) return el._x_currentIfEl
 
-        let clone = el.content.cloneNode(true).firstElementChild
+        /** @type {HTMLTemplateElement['content']} */
+        const fragment = el.content;
+        let clone = fragment.cloneNode(true).firstElementChild
 
         addScopeToNode(clone, {}, el)
 
